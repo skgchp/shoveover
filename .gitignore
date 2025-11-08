@@ -1,0 +1,111 @@
+# ShoveOver - Git Ignore File
+
+# Configuration files (keep .example, ignore actual configs)
+config/shoveover.conf
+config/*-production.conf
+config/*-staging.conf
+config/*-development.conf
+config/*-local.conf
+*.conf
+!*.conf.example
+
+# Log files
+*.log
+shoveover.log*
+logs/
+*.out
+
+# Runtime files
+.running
+.lock
+*.pid
+
+# Temporary test files and directories
+tests/tmp-*
+tests/temp-*
+tests/mock-data/
+tests/fixtures/
+!tests/fixtures/.gitkeep
+test-*.conf
+*-test.conf
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+\#*\#
+.#*
+*.bak
+*.orig
+
+# Backup files
+*.backup
+*.bkp
+*~
+
+# Environment files
+.env
+.env.local
+.env.production
+.env.staging
+
+# SSH keys or certificates (if any get added)
+*.pem
+*.key
+*.crt
+*.p12
+
+# Archives
+*.tar.gz
+*.zip
+*.rar
+*.7z
+
+# Compiled files (if any shell scripts get compiled)
+*.o
+*.a
+*.so
+*.exe
+
+# Package files
+*.deb
+*.rpm
+
+# Local Bats installation (if installed via Git)
+.bats/
+bats/
+
+# tmux session files
+.tmux-*
+
+# Any local scripts or utilities
+local-*
+private-*
+secret-*
+
+# Development and testing artifacts
+debug.log
+profile.log
+coverage/
+*.prof
+
+# Documentation build artifacts (if using generators)
+docs/_build/
+docs/.doctrees/
+
+# Local development overrides
+docker-compose.override.yml
+.local/

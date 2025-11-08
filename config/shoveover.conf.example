@@ -1,0 +1,37 @@
+# ShoveOver Configuration
+# This file is sourced by shoveover.sh
+
+# Source-Destination directory pairs
+# Format: "source_path:destination_path"
+# Each source directory will be monitored, and subdirectories will be moved to the paired destination
+# Destinations should be on different drives/filesystems for effective space management
+SOURCE_DEST_PAIRS=(
+    "/srv/disk1/tv:/srv/disk2/tv"
+    "/srv/disk1/films:/srv/disk2/films"
+    "/srv/disk1/cache:/mnt/external/archive/cache"
+    "/var/cache/app:/mnt/backup/app-cache"
+)
+
+# Disk space thresholds (percentages)
+# Script runs when free space falls below LOW_SPACE_THRESHOLD
+LOW_SPACE_THRESHOLD=10
+
+# Script stops when free space reaches TARGET_SPACE_THRESHOLD
+TARGET_SPACE_THRESHOLD=20
+
+# Email notification settings
+EMAIL_ENABLED=true
+EMAIL_RECIPIENT="admin@example.com"
+
+# tmux session name for monitoring
+TMUX_SESSION_NAME="shoveover-$(date +%Y%m%d-%H%M%S)"
+
+# Logging level: DEBUG, INFO, WARN, ERROR
+LOG_LEVEL="INFO"
+
+# Additional safety settings
+# Maximum number of directories to move in one run (prevents runaway cleanup)
+MAX_MOVES_PER_RUN=10
+
+# Minimum age of directories before they can be moved (in days)
+MIN_AGE_DAYS=7
