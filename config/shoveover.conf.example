@@ -41,3 +41,8 @@ MIN_AGE_DAYS=7
 # Set this to prevent excessive recursion on very deep directory structures
 # Leave empty or comment out for unlimited depth
 # MAX_SEARCH_DEPTH=10
+
+# Number of times to retry failed rsync operations before skipping to next directory
+# If rsync or verification fails, the script will retry up to this many times
+# before giving up on that directory and moving to the next one
+RSYNC_MAX_RETRIES=3

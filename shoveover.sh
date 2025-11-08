@@ -30,8 +30,10 @@ TMUX_SESSION_NAME="shoveover"
 MAX_MOVES_PER_RUN=10
 MIN_AGE_DAYS=7
 MAX_SEARCH_DEPTH=""  # Optional: limit depth when searching for leaf directories (empty = unlimited)
+RSYNC_MAX_RETRIES=3  # Number of times to retry failed rsync operations before skipping
 DRY_RUN=false
 DRY_RUN_MOVED_DIRS=()  # Track directories "moved" in dry-run mode to avoid infinite loop
+FAILED_DIRS=()  # Track directories that failed to move to avoid infinite retry loop
 
 cache_log() {
     local level="$1"
@@ -342,6 +344,19 @@ find_oldest_subdir() {
                 fi
             fi
 
+            # Skip directories that previously failed to move
+            local already_failed=false
+            for failed_dir in "${FAILED_DIRS[@]}"; do
+                if [[ "$dir" == "$failed_dir" ]]; then
+                    already_failed=true
+                    break
+                fi
+            done
+            if [[ "$already_failed" == "true" ]]; then
+                cache_log DEBUG "Skipping $dir (previously failed)" >&2
+                continue
+            fi
+
             # Check if this is a leaf directory (no subdirectories)
             if ! is_leaf_directory "$dir"; then
                 cache_log DEBUG "Skipping $dir (not a leaf directory - has subdirectories)" >&2
@@ -474,60 +489,104 @@ move_directory() {
         fi
     fi
 
-    # Use rsync for safe, resumable transfers with progress
-    cache_log INFO "Starting rsync transfer..."
-    
-    if rsync -avh --progress --partial --append "$source_path/" "$destination/"; then
-        cache_log INFO "rsync completed successfully"
-        
-        # Verify the transfer completed successfully
-        if verify_transfer "$source_path" "$destination"; then
-            cache_log INFO "Transfer verification passed, removing source"
-            if rm -rf "$source_path"; then
-                cache_log INFO "Source directory removed successfully"
-                return 0
+    # Retry rsync operations up to RSYNC_MAX_RETRIES times
+    local retry_count=0
+    local max_retries="${RSYNC_MAX_RETRIES:-3}"
+
+    while (( retry_count <= max_retries )); do
+        if (( retry_count > 0 )); then
+            cache_log WARN "Retry attempt $retry_count of $max_retries for: $source_path"
+            sleep 2  # Brief delay between retries
+        fi
+
+        cache_log INFO "Starting rsync transfer (attempt $((retry_count + 1))/$((max_retries + 1)))..."
+
+        if rsync -avh --progress --partial --append "$source_path/" "$destination/"; then
+            cache_log INFO "rsync completed successfully"
+
+            # Verify the transfer completed successfully
+            if verify_transfer "$source_path" "$destination"; then
+                cache_log INFO "Transfer verification passed, removing source"
+                if rm -rf "$source_path"; then
+                    cache_log INFO "Source directory removed successfully"
+                    return 0
+                else
+                    cache_log ERROR "Failed to remove source directory: $source_path"
+                    return 1
+                fi
             else
-                cache_log ERROR "Failed to remove source directory: $source_path"
-                return 1
+                cache_log ERROR "Transfer verification failed (attempt $((retry_count + 1))/$((max_retries + 1)))"
+                retry_count=$((retry_count + 1))
+                if (( retry_count > max_retries )); then
+                    cache_log ERROR "All retry attempts exhausted for verification, keeping source directory"
+                    return 1
+                fi
             fi
         else
-            cache_log ERROR "Transfer verification failed, keeping source directory"
-            return 1
+            cache_log ERROR "rsync failed (attempt $((retry_count + 1))/$((max_retries + 1)))"
+            retry_count=$((retry_count + 1))
+            if (( retry_count > max_retries )); then
+                cache_log ERROR "All retry attempts exhausted for rsync, keeping source directory"
+                return 1
+            fi
         fi
-    else
-        cache_log ERROR "rsync failed for: $source_path"
-        return 1
-    fi
+    done
+
+    # Should never reach here, but just in case
+    return 1
 }
 
 verify_transfer() {
     local source="$1"
     local destination="$2"
-    
+
     cache_log DEBUG "Verifying transfer: $source -> $destination"
-    
-    # Check if destination exists and is not empty
+
+    # Check if destination exists
     if [[ ! -d "$destination" ]]; then
         cache_log ERROR "Destination directory does not exist: $destination"
         return 1
     fi
-    
-    # Compare directory sizes (rough verification)
-    local source_size dest_size
-    source_size="$(du -sk "$source" | cut -f1)"
-    dest_size="$(du -sk "$destination" | cut -f1)"
-    
-    # Allow for small differences due to filesystem overhead
-    local size_diff=$((source_size - dest_size))
-    local size_diff_abs=${size_diff#-}  # absolute value
-    local tolerance=$((source_size / 100))  # 1% tolerance
-    
-    if (( size_diff_abs > tolerance && size_diff_abs > 1024 )); then  # More than 1MB and 1% difference
-        cache_log ERROR "Size verification failed: source=${source_size}KB, dest=${dest_size}KB"
+
+    # Run rsync in dry-run mode to verify all files transferred
+    # Use timeout to prevent hanging (30 seconds should be sufficient for metadata comparison)
+    local rsync_verify_output
+    local rsync_exit_code
+
+    rsync_verify_output=$(timeout 30 rsync --dry-run --itemize-changes --recursive --size-only \
+                                --exclude='.*' --no-links \
+                                "$source/" "$destination/" 2>&1)
+    rsync_exit_code=$?
+
+    # Check for timeout (exit code 124)
+    if (( rsync_exit_code == 124 )); then
+        cache_log ERROR "rsync verification timed out after 30 seconds"
         return 1
     fi
-    
-    cache_log DEBUG "Size verification passed: source=${source_size}KB, dest=${dest_size}KB"
+
+    # Check for other rsync errors
+    if (( rsync_exit_code != 0 )); then
+        cache_log ERROR "rsync verification failed with exit code: $rsync_exit_code"
+        cache_log DEBUG "rsync output: $rsync_verify_output"
+        return 1
+    fi
+
+    # Parse output for missing or mismatched files
+    # >f+++ indicates file missing in destination
+    # .s. or >f.s indicates size mismatch
+    local missing_or_mismatched
+    missing_or_mismatched=$(echo "$rsync_verify_output" | grep -E '^>f\+|\.s\.')
+
+    if [[ -n "$missing_or_mismatched" ]]; then
+        cache_log ERROR "Verification failed: files missing or size mismatch detected"
+        cache_log ERROR "Affected files:"
+        while IFS= read -r line; do
+            cache_log ERROR "  $line"
+        done <<< "$missing_or_mismatched"
+        return 1
+    fi
+
+    cache_log INFO "Transfer verification passed: all files present and sizes match"
     return 0
 }
 
@@ -693,7 +752,11 @@ main() {
             total_freed=$((total_freed + dir_size))
             cache_log INFO "Successfully moved $oldest_dir (${dir_size}MB freed)"
         else
-            error_exit "Failed to move directory: $oldest_dir"
+            cache_log ERROR "Failed to move directory after $RSYNC_MAX_RETRIES retries: $oldest_dir"
+            cache_log WARN "Skipping failed directory and continuing with next oldest directory"
+            # Add to failed list to prevent selecting it again
+            FAILED_DIRS+=("$oldest_dir")
+            # Continue to next iteration without incrementing moved_count
         fi
     done
     
