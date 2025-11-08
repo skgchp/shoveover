@@ -1,0 +1,71 @@
+name: Test Suite
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up environment
+        run: |
+          echo "Setting up test environment..."
+          chmod +x shoveover.sh
+          chmod +x scripts/*.sh
+          chmod +x tests/test-runner.sh
+
+      - name: Install dependencies
+        run: |
+          echo "Installing Bats testing framework..."
+          ./scripts/install-deps.sh
+
+      - name: Run test suite
+        run: |
+          echo "Running full test suite..."
+          ./tests/test-runner.sh
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            shoveover.log
+            tests/**/*.log
+          retention-days: 7
+
+  lint:
+    name: Shell Script Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on main script
+        run: |
+          shellcheck shoveover.sh || true
+
+      - name: Run ShellCheck on helper scripts
+        run: |
+          find scripts/ -name "*.sh" -type f -exec shellcheck {} \; || true

@@ -4,17 +4,20 @@ A robust, production-ready bash script for automated disk space management throu
 
 ## Overview
 
-ShoveOver monitors disk space usage and automatically moves the oldest cache subdirectories to external storage when disk space falls below configurable thresholds. The script is designed for production environments with comprehensive error handling, monitoring capabilities, and safety features.
+ShoveOver monitors disk space usage and automatically identifies and moves the oldest leaf directories (deepest folders with no subdirectories) to external storage when disk space falls below configurable thresholds. The full directory structure is preserved at the destination. The script is designed for production environments with comprehensive error handling, monitoring capabilities, and safety features.
 
 ## Features
 
 ### 🚀 Core Functionality
 - **Automatic disk space monitoring** with configurable thresholds
+- **Leaf directory detection** identifies folders with no subdirectories at any depth
 - **Intelligent oldest-first directory selection** based on modification time
+- **Path structure preservation** maintains full directory hierarchy at destination
 - **Paired source-destination mapping** for organized file movement
 - **Safe file movement** using rsync with verification and rollback capability
 - **Process locking** to prevent multiple simultaneous executions
 - **Comprehensive logging** with configurable verbosity levels
+- **Performance optimized** with configurable search depth limits
 
 ### 🛡️ Safety & Reliability
 - **Dry run mode** for testing without actual file operations
@@ -112,7 +115,7 @@ tmux attach-session -t shoveover-$(date +%Y%m%d-%H%M%S)
 
 ### Source-Destination Pairs
 
-ShoveOver uses a paired mapping approach where each source directory has a specific destination directory. This provides better organization and control over where moved files end up.
+ShoveOver uses a paired mapping approach where each source directory has a specific destination directory. Leaf directories (folders with no subdirectories) found within the source are moved to the destination, preserving their full relative path structure. This provides better organization and control over where moved files end up.
 
 **Format**: `"source_path:destination_path"`
 
@@ -151,6 +154,7 @@ SOURCE_DEST_PAIRS=(
 |---------|-------------|---------|
 | `MAX_MOVES_PER_RUN` | Maximum directories to move per execution | `10` |
 | `MIN_AGE_DAYS` | Minimum age (days) before directories can be moved | `7` |
+| `MAX_SEARCH_DEPTH` | Maximum depth to search for leaf directories (optional, empty = unlimited) | `""` |
 
 ### Notification Settings
 
@@ -165,6 +169,57 @@ SOURCE_DEST_PAIRS=(
 |---------|-------------|---------|
 | `TMUX_SESSION_NAME` | Name for monitoring session | `"shoveover"` |
 | `LOG_LEVEL` | Logging verbosity (DEBUG/INFO/WARN/ERROR) | `"INFO"` |
+
+## Leaf Directory Detection
+
+ShoveOver uses intelligent leaf directory detection to identify the deepest folders with no subdirectories for migration. This ensures that complete, self-contained content units are moved rather than partially breaking up directory trees.
+
+### How It Works
+
+A **leaf directory** is defined as a directory that contains **no subdirectories** (it may contain files or be empty).
+
+**Example Structure:**
+```
+/srv/ssd/Video/
+├── tv/
+│   ├── show1/
+│   │   ├── season-1/         ← Leaf directory (files only)
+│   │   └── season-2/         ← Leaf directory (files only)
+│   └── show2/
+│       └── season-1/         ← Leaf directory (files only)
+└── films/
+    ├── film-1/               ← Leaf directory (files only)
+    └── film-2/               ← Leaf directory (files only)
+```
+
+**Leaf directories identified:** `season-1`, `season-2`, `season-1` (from show2), `film-1`, `film-2`
+**Non-leaf directories (skipped):** `Video`, `tv`, `show1`, `show2`, `films`
+
+### Path Preservation
+
+When a leaf directory is moved, the full relative path from the source root is preserved:
+
+```
+Source:      /srv/ssd/Video/tv/show1/season-1
+Destination: /srv/hdd/Video/tv/show1/season-1
+             └─────────────┬────────────────┘
+                  Preserved structure
+```
+
+### Performance Considerations
+
+For very deep directory trees, you can limit the search depth using `MAX_SEARCH_DEPTH`:
+
+```bash
+# Limit search to 10 levels deep
+MAX_SEARCH_DEPTH=10
+```
+
+This prevents excessive recursion on directory structures with hundreds of levels, improving performance while still finding most leaf directories.
+
+### Age Calculation
+
+Age is determined by the leaf directory's modification time (mtime), not the files within it. Only leaf directories older than `MIN_AGE_DAYS` are eligible for migration.
 
 ## Command Line Options
 

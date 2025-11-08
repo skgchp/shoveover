@@ -29,6 +29,7 @@ EMAIL_RECIPIENT=""
 TMUX_SESSION_NAME="shoveover"
 MAX_MOVES_PER_RUN=10
 MIN_AGE_DAYS=7
+MAX_SEARCH_DEPTH=""  # Optional: limit depth when searching for leaf directories (empty = unlimited)
 DRY_RUN=false
 
 cache_log() {
@@ -266,6 +267,31 @@ create_tmux_session() {
     cache_log INFO "Monitor progress with: tmux attach-session -t $TMUX_SESSION_NAME"
 }
 
+is_leaf_directory() {
+    local dir="$1"
+
+    # A leaf directory is one that has no subdirectories
+    # Use find to check if there are any subdirectories
+    # -mindepth 1 -maxdepth 1: only immediate children
+    # -type d: only directories
+    # -quit: exit on first match (performance optimization)
+    if find "$dir" -mindepth 1 -maxdepth 1 -type d -quit 2>/dev/null | grep -q .; then
+        return 1  # Has subdirectories, not a leaf
+    else
+        return 0  # No subdirectories, is a leaf
+    fi
+}
+
+get_relative_path() {
+    local base="$1"
+    local full_path="$2"
+
+    # Remove the base path from the full path to get relative path
+    # Handle trailing slashes properly
+    local normalized_base="${base%/}"
+    echo "${full_path#$normalized_base/}"
+}
+
 find_oldest_subdir() {
     local oldest_path=""
     local oldest_time=""
@@ -274,12 +300,26 @@ find_oldest_subdir() {
     local i
     for i in "${!SOURCE_DIRS[@]}"; do
         local source_dir="${SOURCE_DIRS[i]}"
+
+        # Build find command with optional depth limit
+        local find_cmd="find \"$source_dir\" -mindepth 1 -type d"
+        if [[ -n "${MAX_SEARCH_DEPTH:-}" ]] && [[ "$MAX_SEARCH_DEPTH" -gt 0 ]]; then
+            find_cmd="$find_cmd -maxdepth $MAX_SEARCH_DEPTH"
+        fi
+        find_cmd="$find_cmd -print0"
+
         while IFS= read -r -d '' dir; do
             local dir_name
             dir_name="$(basename "$dir")"
 
             # Skip hidden directories and current/parent dir references
             if [[ "$dir_name" =~ ^\..*$ ]]; then
+                continue
+            fi
+
+            # Check if this is a leaf directory (no subdirectories)
+            if ! is_leaf_directory "$dir"; then
+                cache_log DEBUG "Skipping $dir (not a leaf directory - has subdirectories)" >&2
                 continue
             fi
 
@@ -301,7 +341,7 @@ find_oldest_subdir() {
                 oldest_path="$dir"
                 oldest_source="$source_dir"
             fi
-        done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -type d -print0)
+        done < <(eval "$find_cmd")
     done
 
     # Return the oldest directory path
@@ -365,26 +405,43 @@ move_directory() {
     if [[ -z "$dest_base" ]]; then
         error_exit "Could not find destination for source: $source_root"
     fi
-    
-    local dir_name
-    dir_name="$(basename "$source_path")"
-    local destination="$dest_base/$dir_name"
-    
+
+    # Get the relative path from source root to preserve directory structure
+    local relative_path
+    relative_path="$(get_relative_path "$source_root" "$source_path")"
+    local destination="$dest_base/$relative_path"
+
     cache_log INFO "Preparing to move: $source_path -> $destination"
-    
+    cache_log DEBUG "Relative path: $relative_path"
+
     # Check if destination already exists
     if [[ -e "$destination" ]]; then
         local timestamp
         timestamp="$(date '+%Y%m%d-%H%M%S')"
-        destination="${dest_base}/${dir_name}-${timestamp}"
+        local dir_name
+        dir_name="$(basename "$destination")"
+        local parent_dir
+        parent_dir="$(dirname "$destination")"
+        destination="${parent_dir}/${dir_name}-${timestamp}"
         cache_log WARN "Destination exists, using: $destination"
     fi
-    
+
     if [[ "$DRY_RUN" == "true" ]]; then
         cache_log INFO "DRY RUN: Would move $source_path to $destination"
         return 0
     fi
-    
+
+    # Create parent directories at destination
+    local dest_parent
+    dest_parent="$(dirname "$destination")"
+    if [[ ! -d "$dest_parent" ]]; then
+        cache_log INFO "Creating parent directories: $dest_parent"
+        if ! mkdir -p "$dest_parent"; then
+            cache_log ERROR "Failed to create parent directories: $dest_parent"
+            return 1
+        fi
+    fi
+
     # Use rsync for safe, resumable transfers with progress
     cache_log INFO "Starting rsync transfer..."
     
