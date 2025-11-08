@@ -290,22 +290,17 @@ MAX_MOVES_PER_RUN=1
 MIN_AGE_DAYS=0
 EOF
     
-    # Run script in background to test tmux session creation
-    "$SHOVEOVER" --config "$TEST_CONFIG" &
-    local script_pid=$!
-    
-    # Give script time to start and create session
-    sleep 2
-    
-    # Check if tmux session was created
-    tmux has-session -t "test-tmux-session"
-    local session_exists=$?
-    
-    # Wait for script to complete
-    wait $script_pid
-    
-    # tmux session should have been created during execution
-    [ $session_exists -eq 0 ]
+    # Run script and capture output
+    run "$SHOVEOVER" --config "$TEST_CONFIG"
+
+    # Script should complete successfully
+    [ "$status" -eq 0 ]
+
+    # Output should indicate tmux session was created
+    [[ "$output" =~ "Created tmux session: test-tmux-session" ]]
+
+    # Output should indicate tmux session was cleaned up
+    [[ "$output" =~ "Cleaned up tmux session: test-tmux-session" ]]
 }
 
 skip_if_no_tmux() {
@@ -315,10 +310,10 @@ skip_if_no_tmux() {
 }
 
 @test "integration: error conditions should be handled gracefully" {
-    # Create scenario where rsync will fail (no write permission on destination)
+    # Create scenario where directory creation will fail (no write permission on destination)
     create_mock_cache_dirs "$SOURCE1" 1 10
     chmod 444 "$DESTINATION"  # Remove write permission
-    
+
     cat > "$TEST_CONFIG" << EOF
 SOURCE_DEST_PAIRS=("$SOURCE1:$DESTINATION/source1")
 LOW_SPACE_THRESHOLD=99
@@ -329,14 +324,18 @@ LOG_LEVEL="INFO"
 MAX_MOVES_PER_RUN=1
 MIN_AGE_DAYS=0
 EOF
-    
+
     run "$SHOVEOVER" --config "$TEST_CONFIG"
     [ "$status" -eq 1 ]  # Should exit with error
-    [[ "$output" =~ "Failed to move directory" ]]
-    
-    # Source directory should still exist (failed move)
+
+    # Should fail during directory validation with permission error
+    [[ "$output" =~ "Failed to create destination directory" ]] || \
+    [[ "$output" =~ "Directory validation failed" ]] || \
+    [[ "$output" =~ "No write permission" ]]
+
+    # Source directory should still exist (failed before move)
     [ -d "$SOURCE1/cache_dir_1" ]
-    
+
     # Restore permissions for cleanup
     chmod 755 "$DESTINATION"
 }

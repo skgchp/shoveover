@@ -4,7 +4,7 @@ A robust, production-ready bash script for automated disk space management throu
 
 ## Summary
 
-Inspired by [mergerfs.percent-full-mover](https://raw.githubusercontent.com/trapexit/mergerfs/refs/heads/latest-release/tools/mergerfs.percent-full-mover), ShoveOver is designed for mergerfs storage arrays with solid state storage acting as a [tiered cache](https://trapexit.github.io/mergerfs/preview/extended_usage_patterns/). When scheduled to run, ShoveOver monitors free space on your SSD cache and automatically rsyncs the oldest folders to a hard drive array, maintaining your configured free space threshold and keeping your fast storage ready for new writes.
+Inspired by [mergerfs.percent-full-mover](https://raw.githubusercontent.com/trapexit/mergerfs/refs/heads/latest-release/tools/mergerfs.percent-full-mover), ShoveOver is designed for mergerfs storage arrays with solid state storage acting as a [tiered cache](https://trapexit.github.io/mergerfs/preview/extended_usage_patterns/). When scheduled to run, ShoveOver monitors free space on your SSD cache and automatically rsyncs the oldest leaf directories (deepest folders with no subdirectories, like `/Video/tv/show/season-1`) to a hard drive array, maintaining your configured free space threshold and keeping your fast storage ready for new writes. The full directory structure is preserved at the destination.
 
 ## AI disclaimer
 
@@ -13,7 +13,9 @@ This project was created with the assistance of generative AI.
 ## Features
 
 - **Source-destination pairs**: Map each source directory to a specific destination
-- **Intelligent cleanup**: Moves oldest subdirectories when disk space is low
+- **Intelligent cleanup**: Identifies and moves oldest leaf directories (folders with no subdirectories) at any depth
+- **Path preservation**: Full directory structure is maintained at the destination (e.g., `/ssd/Video/tv/show/season-1` → `/hdd/Video/tv/show/season-1`)
+- **Performance optimized**: Configurable search depth limit to handle large directory trees efficiently
 - **Safety features**: Dry-run mode, minimum age requirements, process locking
 - **Monitoring**: tmux integration and email notifications
 - **Production ready**: Comprehensive error handling and logging

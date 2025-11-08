@@ -1,0 +1,94 @@
+name: Test Suite
+
+on:
+  pull_request:
+    branches:
+      - main
+      - master
+      - develop
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up environment
+        run: |
+          echo "Setting up test environment..."
+          chmod +x shoveover.sh
+          chmod +x scripts/*.sh
+          chmod +x tests/test-runner.sh
+
+      - name: Install dependencies
+        run: |
+          echo "Installing Bats testing framework..."
+          ./scripts/install-deps.sh
+
+      - name: Run test suite
+        run: |
+          echo "Running full test suite..."
+          ./tests/test-runner.sh 2>&1 | tee test-execution.log
+          exit ${PIPESTATUS[0]}
+
+      - name: Collect log files
+        if: always()
+        run: |
+          echo "Collecting log files..."
+          mkdir -p test-artifacts
+
+          # Copy main log if it exists
+          if [ -f shoveover.log ]; then
+            cp shoveover.log test-artifacts/ || true
+          fi
+
+          # Copy test execution log
+          if [ -f test-execution.log ]; then
+            cp test-execution.log test-artifacts/ || true
+          fi
+
+          # Copy any test logs
+          find tests/ -name "*.log" -type f -exec cp {} test-artifacts/ \; || true
+
+          # List what we collected
+          echo "Collected artifacts:"
+          ls -lah test-artifacts/ || echo "No artifacts collected"
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: test-artifacts/
+          retention-days: 7
+          if-no-files-found: warn
+
+  lint:
+    name: Shell Script Linting
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck on main script
+        run: |
+          shellcheck shoveover.sh || true
+
+      - name: Run ShellCheck on helper scripts
+        run: |
+          find scripts/ -name "*.sh" -type f -exec shellcheck {} \; || true

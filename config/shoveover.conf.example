@@ -3,7 +3,8 @@
 
 # Source-Destination directory pairs
 # Format: "source_path:destination_path"
-# Each source directory will be monitored, and subdirectories will be moved to the paired destination
+# Each source directory will be monitored, and leaf directories (deepest folders with no subdirectories)
+# will be moved to the paired destination, preserving the full directory structure
 # Destinations should be on different drives/filesystems for effective space management
 SOURCE_DEST_PAIRS=(
     "/srv/disk1/tv:/srv/disk2/tv"
@@ -35,3 +36,8 @@ MAX_MOVES_PER_RUN=10
 
 # Minimum age of directories before they can be moved (in days)
 MIN_AGE_DAYS=7
+
+# Maximum depth to search for leaf directories (optional)
+# Set this to prevent excessive recursion on very deep directory structures
+# Leave empty or comment out for unlimited depth
+# MAX_SEARCH_DEPTH=10
