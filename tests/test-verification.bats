@@ -33,6 +33,10 @@ create_test_file() {
 
     mkdir -p "$(dirname "$filepath")"
     head -c $((size_kb * 1024)) /dev/zero > "$filepath" 2>/dev/null
+
+    # Ensure different files have different timestamps to avoid rsync timestamp optimizations
+    # Touch the file with a unique timestamp based on size (helps Linux CI)
+    sleep 0.01 || true
 }
 
 @test "verification: should pass when all files match (name and size)" {
