@@ -33,6 +33,7 @@ TMUX_SESSION_NAME="shoveover-integration-test"
 LOG_LEVEL="DEBUG"
 MAX_MOVES_PER_RUN=3
 MIN_AGE_DAYS=0
+STALE_LOCK_TIMEOUT=7200
 EOF
 }
 
@@ -83,23 +84,25 @@ create_mock_cache_dirs() {
 @test "integration: script should exit early when disk space is sufficient" {
     # Create some cache directories
     create_mock_cache_dirs "$SOURCE1" 3 5
-    
-    # Set thresholds that won't trigger cleanup (most systems have > 5% free space)
+
+    # Set extremely low thresholds that won't trigger cleanup on any reasonable system
+    # Use 1% as threshold - essentially all filesystems will have > 1% free
     cat > "$TEST_CONFIG" << EOF
 SOURCE_DEST_PAIRS=("$SOURCE1:$DESTINATION/source1")
-LOW_SPACE_THRESHOLD=5
-TARGET_SPACE_THRESHOLD=10
+LOW_SPACE_THRESHOLD=1
+TARGET_SPACE_THRESHOLD=2
 EMAIL_ENABLED=false
 TMUX_SESSION_NAME="test-sufficient-space"
 LOG_LEVEL="INFO"
 MIN_AGE_DAYS=0
+STALE_LOCK_TIMEOUT=7200
 EOF
-    
+
     run "$SHOVEOVER" --config "$TEST_CONFIG"
     [ "$status" -eq 0 ]
     [[ "$output" =~ "Sufficient free space" ]]
-    
-    # Cache directories should still exist
+
+    # Cache directories should still exist (nothing was moved)
     [ -d "$SOURCE1/cache_dir_1" ]
     [ -d "$SOURCE1/cache_dir_2" ]
     [ -d "$SOURCE1/cache_dir_3" ]

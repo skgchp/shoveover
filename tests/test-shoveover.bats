@@ -45,6 +45,113 @@ teardown() {
     [ -f "$LOCK_FILE" ]
 }
 
+@test "process locking: stale lock should be detected and cleaned up" {
+    # Start a background sleep process to use as the "hung" process
+    sleep 300 &
+    local bg_pid=$!
+
+    # Create a lock file with the background process PID
+    echo "$bg_pid" > "$LOCK_FILE"
+
+    # Age the lock file to simulate stale process (8 hours old)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        touch -t "$(date -v-8H '+%Y%m%d%H%M.%S')" "$LOCK_FILE"
+    else
+        touch -d "8 hours ago" "$LOCK_FILE"
+    fi
+
+    # Set a short timeout for testing (1 hour = 3600s)
+    STALE_LOCK_TIMEOUT=3600
+
+    # check_lock should detect stale lock, kill process, and acquire new lock
+    run check_lock
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Detected stale process" ]]
+    [[ "$output" =~ "Acquired process lock" ]]
+
+    # Verify the background process was killed
+    ! kill -0 "$bg_pid" 2>/dev/null
+}
+
+@test "process locking: fresh lock should not be killed" {
+    # Create a lock file with current PID
+    echo "$$" > "$LOCK_FILE"
+
+    # Lock file is fresh (just created)
+    # Set timeout to 1 hour
+    STALE_LOCK_TIMEOUT=3600
+
+    # check_lock should detect running process with fresh lock and fail
+    run check_lock
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Another instance is already running" ]]
+    [[ "$output" =~ "last heartbeat" ]]
+}
+
+@test "process locking: stale lock with dead process should be removed" {
+    # Create a lock file with a PID that doesn't exist
+    echo "999999" > "$LOCK_FILE"
+
+    # Age doesn't matter since process is dead
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        touch -t "$(date -v-8H '+%Y%m%d%H%M.%S')" "$LOCK_FILE"
+    else
+        touch -d "8 hours ago" "$LOCK_FILE"
+    fi
+
+    run check_lock
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Removing stale lock file" ]]
+    [[ "$output" =~ "Acquired process lock" ]]
+}
+
+@test "process locking: timeout threshold should be respected" {
+    # Create a lock file with current PID
+    echo "$$" > "$LOCK_FILE"
+
+    # Age the lock to just under threshold (1 hour 50 minutes)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        touch -t "$(date -v-110M '+%Y%m%d%H%M.%S')" "$LOCK_FILE"
+    else
+        touch -d "110 minutes ago" "$LOCK_FILE"
+    fi
+
+    # Set timeout to 2 hours (7200s)
+    STALE_LOCK_TIMEOUT=7200
+
+    # Lock is old but not past threshold - should not be killed
+    run check_lock
+    [ "$status" -eq 1 ]
+    [[ "$output" =~ "Another instance is already running" ]]
+}
+
+@test "process locking: default timeout should be used if not set" {
+    # Start a background sleep process
+    sleep 300 &
+    local bg_pid=$!
+
+    # Create a lock file with background process PID
+    echo "$bg_pid" > "$LOCK_FILE"
+
+    # Age the lock file well beyond default (10 hours)
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        touch -t "$(date -v-10H '+%Y%m%d%H%M.%S')" "$LOCK_FILE"
+    else
+        touch -d "10 hours ago" "$LOCK_FILE"
+    fi
+
+    # Don't set STALE_LOCK_TIMEOUT - should use default (7200s = 2 hours)
+    unset STALE_LOCK_TIMEOUT
+
+    # Should detect as stale (10 hours > 2 hours default)
+    run check_lock
+    [ "$status" -eq 0 ]
+    [[ "$output" =~ "Detected stale process" ]]
+
+    # Cleanup background process if it survived
+    kill "$bg_pid" 2>/dev/null || true
+}
+
 @test "disk space calculation: get_disk_usage_percent should return valid percentage" {
     run get_disk_usage_percent "/tmp"
     [ "$status" -eq 0 ]
@@ -146,10 +253,10 @@ teardown() {
     SOURCE_DIRS=("$source_dir")
     DEST_DIRS=("$TEST_WORK_DIR/destination")
     MIN_AGE_DAYS=0
-    
+
     mkdir -p "$source_dir/.hidden_dir"
     mkdir -p "$source_dir/visible_dir"
-    
+
     # Make hidden directory older
     if [[ "$OSTYPE" == "darwin"* ]]; then
         touch -t "$(date -v-2d '+%Y%m%d%H%M.%S')" "$source_dir/.hidden_dir"
@@ -158,10 +265,38 @@ teardown() {
         touch -d "2 days ago" "$source_dir/.hidden_dir"
         touch -d "1 day ago" "$source_dir/visible_dir"
     fi
-    
+
     run find_oldest_subdir
     [ "$status" -eq 0 ]
     [[ "$output" = "$source_dir/visible_dir" ]]
+}
+
+@test "find oldest subdirectory: should not follow symlinks" {
+    local source_dir="$TEST_WORK_DIR/source1"
+    SOURCE_DIRS=("$source_dir")
+    DEST_DIRS=("$TEST_WORK_DIR/destination")
+    MIN_AGE_DAYS=0
+
+    # Create a real directory and a symlink to another location
+    mkdir -p "$source_dir/real_dir"
+    mkdir -p "$TEST_WORK_DIR/external_target/data"
+    ln -s "$TEST_WORK_DIR/external_target" "$source_dir/symlink_dir"
+
+    # Make the symlinked directory older
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        touch -t "$(date -v-10d '+%Y%m%d%H%M.%S')" "$TEST_WORK_DIR/external_target"
+        touch -t "$(date -v-1d '+%Y%m%d%H%M.%S')" "$source_dir/real_dir"
+    else
+        touch -d "10 days ago" "$TEST_WORK_DIR/external_target"
+        touch -d "1 day ago" "$source_dir/real_dir"
+    fi
+
+    # Should only find real_dir, not follow symlink
+    run find_oldest_subdir
+    [ "$status" -eq 0 ]
+    [[ "$output" = "$source_dir/real_dir" ]]
+    # Verify symlink target was not considered
+    [[ ! "$output" =~ "external_target" ]]
 }
 
 @test "transfer verification: verify_transfer should pass for identical directories" {

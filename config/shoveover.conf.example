@@ -46,3 +46,12 @@ MIN_AGE_DAYS=7
 # If rsync or verification fails, the script will retry up to this many times
 # before giving up on that directory and moving to the next one
 RSYNC_MAX_RETRIES=3
+
+# Stale process detection and recovery
+# If the lock file hasn't been updated in this many seconds, the process is considered hung
+# and will be automatically killed and restarted on the next run
+# Recommended: 2-3x your longest expected transfer time
+# - For large files over mergerfs: 10800 (3 hours)
+# - For normal local storage: 3600 (1 hour)
+# - Conservative/safe default: 7200 (2 hours)
+STALE_LOCK_TIMEOUT=10800
