@@ -30,6 +30,7 @@ TMUX_SESSION_NAME="shoveover"
 MAX_MOVES_PER_RUN=10
 MIN_AGE_DAYS=7
 MAX_SEARCH_DEPTH=""  # Optional: limit depth when searching for leaf directories (empty = unlimited)
+RSYNC_MAX_RETRIES=3  # Number of times to retry failed rsync operations before skipping
 DRY_RUN=false
 DRY_RUN_MOVED_DIRS=()  # Track directories "moved" in dry-run mode to avoid infinite loop
 
@@ -474,30 +475,51 @@ move_directory() {
         fi
     fi
 
-    # Use rsync for safe, resumable transfers with progress
-    cache_log INFO "Starting rsync transfer..."
-    
-    if rsync -avh --progress --partial --append "$source_path/" "$destination/"; then
-        cache_log INFO "rsync completed successfully"
-        
-        # Verify the transfer completed successfully
-        if verify_transfer "$source_path" "$destination"; then
-            cache_log INFO "Transfer verification passed, removing source"
-            if rm -rf "$source_path"; then
-                cache_log INFO "Source directory removed successfully"
-                return 0
+    # Retry rsync operations up to RSYNC_MAX_RETRIES times
+    local retry_count=0
+    local max_retries="${RSYNC_MAX_RETRIES:-3}"
+
+    while (( retry_count <= max_retries )); do
+        if (( retry_count > 0 )); then
+            cache_log WARN "Retry attempt $retry_count of $max_retries for: $source_path"
+            sleep 2  # Brief delay between retries
+        fi
+
+        cache_log INFO "Starting rsync transfer (attempt $((retry_count + 1))/$((max_retries + 1)))..."
+
+        if rsync -avh --progress --partial --append "$source_path/" "$destination/"; then
+            cache_log INFO "rsync completed successfully"
+
+            # Verify the transfer completed successfully
+            if verify_transfer "$source_path" "$destination"; then
+                cache_log INFO "Transfer verification passed, removing source"
+                if rm -rf "$source_path"; then
+                    cache_log INFO "Source directory removed successfully"
+                    return 0
+                else
+                    cache_log ERROR "Failed to remove source directory: $source_path"
+                    return 1
+                fi
             else
-                cache_log ERROR "Failed to remove source directory: $source_path"
-                return 1
+                cache_log ERROR "Transfer verification failed (attempt $((retry_count + 1))/$((max_retries + 1)))"
+                retry_count=$((retry_count + 1))
+                if (( retry_count > max_retries )); then
+                    cache_log ERROR "All retry attempts exhausted for verification, keeping source directory"
+                    return 1
+                fi
             fi
         else
-            cache_log ERROR "Transfer verification failed, keeping source directory"
-            return 1
+            cache_log ERROR "rsync failed (attempt $((retry_count + 1))/$((max_retries + 1)))"
+            retry_count=$((retry_count + 1))
+            if (( retry_count > max_retries )); then
+                cache_log ERROR "All retry attempts exhausted for rsync, keeping source directory"
+                return 1
+            fi
         fi
-    else
-        cache_log ERROR "rsync failed for: $source_path"
-        return 1
-    fi
+    done
+
+    # Should never reach here, but just in case
+    return 1
 }
 
 verify_transfer() {
@@ -693,7 +715,9 @@ main() {
             total_freed=$((total_freed + dir_size))
             cache_log INFO "Successfully moved $oldest_dir (${dir_size}MB freed)"
         else
-            error_exit "Failed to move directory: $oldest_dir"
+            cache_log ERROR "Failed to move directory after $RSYNC_MAX_RETRIES retries: $oldest_dir"
+            cache_log WARN "Skipping failed directory and continuing with next oldest directory"
+            # Continue to next iteration without incrementing moved_count
         fi
     done
     

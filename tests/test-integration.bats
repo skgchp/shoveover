@@ -341,3 +341,49 @@ EOF
     # Restore permissions for cleanup
     chmod 755 "$DESTINATION"
 }
+
+@test "integration: should retry failed transfers and skip to next directory" {
+    # Create multiple cache directories
+    create_mock_cache_dirs "$SOURCE1" 3 10
+
+    # Make the first directory's destination fail by creating a read-only parent
+    # This will cause mkdir -p to fail for the first directory
+    mkdir -p "$DESTINATION/source1"
+    mkdir -p "$DESTINATION/source1/cache_dir_1"
+    chmod 444 "$DESTINATION/source1/cache_dir_1"  # Make it read-only so rsync will fail
+
+    cat > "$TEST_CONFIG" << EOF
+SOURCE_DEST_PAIRS=("$SOURCE1:$DESTINATION/source1")
+LOW_SPACE_THRESHOLD=99
+TARGET_SPACE_THRESHOLD=99
+EMAIL_ENABLED=false
+TMUX_SESSION_NAME="test-retry"
+LOG_LEVEL="INFO"
+MAX_MOVES_PER_RUN=5
+MIN_AGE_DAYS=0
+RSYNC_MAX_RETRIES=2
+EOF
+
+    run "$SHOVEOVER" --config "$TEST_CONFIG"
+
+    # Script should complete successfully despite one failure
+    [ "$status" -eq 0 ]
+
+    # Output should show retry attempts
+    [[ "$output" =~ "retry" ]] || [[ "$output" =~ "Retry" ]]
+
+    # Should show that it skipped failed directory
+    [[ "$output" =~ "Skipping failed directory" ]] || [[ "$output" =~ "Failed to move directory" ]]
+
+    # First directory should still exist (failed)
+    [ -d "$SOURCE1/cache_dir_1" ]
+
+    # Other directories should be moved successfully
+    [ ! -d "$SOURCE1/cache_dir_2" ] || [ ! -d "$SOURCE1/cache_dir_3" ]
+
+    # At least one successful move
+    [[ "$output" =~ "Successfully moved" ]]
+
+    # Restore permissions for cleanup
+    chmod 755 "$DESTINATION/source1/cache_dir_1"
+}
