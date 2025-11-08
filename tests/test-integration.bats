@@ -262,15 +262,17 @@ EOF
     run "$SHOVEOVER" --config "$TEST_CONFIG"
     [ "$status" -eq 0 ]
 
-    # Should create timestamped directory name
-    local moved_dirs
-    moved_dirs=$(ls -1 "$DESTINATION/source1" | grep -E "cache_dir_1-[0-9]{8}-[0-9]{6}")
-    [ -n "$moved_dirs" ]
+    # Should merge contents into existing directory (not create timestamped version)
+    [ -d "$DESTINATION/source1/cache_dir_1" ]
 
-    # Original conflicting directory should remain unchanged
+    # Existing file should remain
     [ -f "$DESTINATION/source1/cache_dir_1/existing.txt" ]
 
-    # Source should be removed
+    # New files from source should be added
+    [ -f "$DESTINATION/source1/cache_dir_1/data.txt" ]
+    [ -f "$DESTINATION/source1/cache_dir_1/metadata.json" ]
+
+    # Source should be removed after successful transfer
     [ ! -d "$SOURCE1/cache_dir_1" ]
 }
 
