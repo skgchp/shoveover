@@ -275,9 +275,14 @@ is_leaf_directory() {
     # -mindepth 1 -maxdepth 1: only immediate children
     # -type d: only directories
     # -quit: exit on first match (performance optimization)
-    if find "$dir" -mindepth 1 -maxdepth 1 -type d -quit 2>/dev/null | grep -q .; then
+    local subdir_check
+    subdir_check="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -quit 2>/dev/null)"
+
+    if [[ -n "$subdir_check" ]]; then
+        cache_log DEBUG "Not a leaf (has subdirs): $dir (found: $(basename "$subdir_check"))" >&2
         return 1  # Has subdirectories, not a leaf
     else
+        cache_log DEBUG "Is a leaf (no subdirs): $dir" >&2
         return 0  # No subdirectories, is a leaf
     fi
 }
@@ -426,16 +431,9 @@ move_directory() {
     cache_log INFO "Preparing to move: $source_path -> $destination"
     cache_log DEBUG "Relative path: $relative_path"
 
-    # Check if destination already exists
+    # If destination exists, rsync will merge/update the contents
     if [[ -e "$destination" ]]; then
-        local timestamp
-        timestamp="$(date '+%Y%m%d-%H%M%S')"
-        local dir_name
-        dir_name="$(basename "$destination")"
-        local parent_dir
-        parent_dir="$(dirname "$destination")"
-        destination="${parent_dir}/${dir_name}-${timestamp}"
-        cache_log WARN "Destination exists, using: $destination"
+        cache_log INFO "Destination already exists, will merge/update contents: $destination"
     fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
