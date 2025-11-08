@@ -582,7 +582,7 @@ verify_transfer() {
     # Run rsync in dry-run mode to verify all files transferred
     # Use timeout to prevent hanging (30 seconds should be sufficient for metadata comparison)
     # Use --size-only to compare ONLY by file size (ignore timestamps)
-    # This will report files that are missing or have different sizes
+    # This will report ANY files that differ in size or are missing, regardless of which is larger
     local rsync_verify_output
     local rsync_exit_code
 
@@ -604,18 +604,16 @@ verify_transfer() {
         return 1
     fi
 
-    # Parse output for missing or mismatched files
-    # >f+++ indicates file missing in destination
-    # .s. or >f.s indicates size mismatch
-    local missing_or_mismatched
-    missing_or_mismatched=$(echo "$rsync_verify_output" | grep -E '^>f\+|\.s\.')
+    # Look for any files that would be transferred (missing or size mismatch)
+    local files_to_transfer
+    files_to_transfer=$(echo "$rsync_verify_output" | grep -E '^>f')
 
-    if [[ -n "$missing_or_mismatched" ]]; then
+    if [[ -n "$files_to_transfer" ]]; then
         cache_log ERROR "Verification failed: files missing or size mismatch detected"
         cache_log ERROR "Affected files:"
         while IFS= read -r line; do
             cache_log ERROR "  $line"
-        done <<< "$missing_or_mismatched"
+        done <<< "$files_to_transfer"
         return 1
     fi
 
