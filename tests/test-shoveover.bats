@@ -177,7 +177,7 @@ teardown() {
     LOG_LEVEL="DEBUG"
     run verify_transfer "$source" "$destination"
     [ "$status" -eq 0 ]
-    [[ "$output" =~ "Size verification passed" ]]
+    [[ "$output" =~ "Transfer verification passed" ]]
 }
 
 @test "transfer verification: verify_transfer should fail for missing destination" {
