@@ -145,8 +145,8 @@ load_config() {
         
         SOURCE_DIRS+=("$source")
         DEST_DIRS+=("$destination")
-        ((pair_count++))
-        
+        pair_count=$((pair_count + 1))
+
         cache_log DEBUG "Parsed pair $pair_count: '$source' -> '$destination'"
     done
     
@@ -164,10 +164,10 @@ validate_directories() {
         # Validate source directory
         if [[ ! -d "$source" ]]; then
             cache_log ERROR "Source directory does not exist: $source"
-            ((validation_errors++))
+            validation_errors=$((validation_errors + 1))
         elif [[ ! -r "$source" ]]; then
             cache_log ERROR "No read permission for source directory: $source"
-            ((validation_errors++))
+            validation_errors=$((validation_errors + 1))
         fi
         
         # Validate destination directory (create if it doesn't exist)
@@ -175,13 +175,13 @@ validate_directories() {
             cache_log WARN "Destination directory does not exist, creating: $destination"
             if ! mkdir -p "$destination" 2>/dev/null; then
                 cache_log ERROR "Failed to create destination directory: $destination"
-                ((validation_errors++))
+                validation_errors=$((validation_errors + 1))
             fi
         fi
-        
+
         if [[ -d "$destination" ]] && [[ ! -w "$destination" ]]; then
             cache_log ERROR "No write permission for destination directory: $destination"
-            ((validation_errors++))
+            validation_errors=$((validation_errors + 1))
         fi
         
         cache_log DEBUG "Validated pair: $source -> $destination"
@@ -648,8 +648,8 @@ main() {
         
         if move_directory "$oldest_dir"; then
             moved_dirs+=("$oldest_dir")
-            ((moved_count++))
-            ((total_freed += dir_size))
+            moved_count=$((moved_count + 1))
+            total_freed=$((total_freed + dir_size))
             cache_log INFO "Successfully moved $oldest_dir (${dir_size}MB freed)"
         else
             error_exit "Failed to move directory: $oldest_dir"
