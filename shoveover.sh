@@ -581,11 +581,12 @@ verify_transfer() {
 
     # Run rsync in dry-run mode to verify all files transferred
     # Use timeout to prevent hanging (30 seconds should be sufficient for metadata comparison)
-    # Compare by size and file presence (checksum would be more thorough but much slower)
+    # Use --size-only to compare ONLY by file size (ignore timestamps)
+    # This will report files that are missing or have different sizes
     local rsync_verify_output
     local rsync_exit_code
 
-    rsync_verify_output=$(timeout 30 rsync --dry-run --itemize-changes --recursive \
+    rsync_verify_output=$(timeout 30 rsync --dry-run --itemize-changes --recursive --size-only \
                                 --exclude='.*' --no-links \
                                 "$source/" "$destination/" 2>&1)
     rsync_exit_code=$?

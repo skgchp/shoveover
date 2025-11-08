@@ -87,7 +87,7 @@ create_test_file() {
 
     # Create destination files with different sizes
     create_test_file "$dest/file1.dat" 5
-    create_test_file "$dest/file2.dat" 20  # Different size
+    create_test_file "$dest/file2.dat" 20  # Different size (20KB vs 10KB)
 
     run verify_transfer "$source" "$dest"
     [ "$status" -eq 1 ]
@@ -189,7 +189,7 @@ create_test_file() {
 
     # Create destination with complete and partial file
     create_test_file "$dest/complete.dat" 100
-    create_test_file "$dest/partial.dat" 50  # Only half transferred
+    create_test_file "$dest/partial.dat" 50  # Only half transferred (50KB vs 100KB)
 
     run verify_transfer "$source" "$dest"
     [ "$status" -eq 1 ]
