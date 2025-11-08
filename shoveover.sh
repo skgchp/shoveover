@@ -31,6 +31,7 @@ MAX_MOVES_PER_RUN=10
 MIN_AGE_DAYS=7
 MAX_SEARCH_DEPTH=""  # Optional: limit depth when searching for leaf directories (empty = unlimited)
 DRY_RUN=false
+DRY_RUN_MOVED_DIRS=()  # Track directories "moved" in dry-run mode to avoid infinite loop
 
 cache_log() {
     local level="$1"
@@ -271,15 +272,19 @@ is_leaf_directory() {
     local dir="$1"
 
     # A leaf directory is one that has no subdirectories
-    # Use find to check if there are any subdirectories
-    # -mindepth 1 -maxdepth 1: only immediate children
-    # -type d: only directories
-    # -quit: exit on first match (performance optimization)
-    local subdir_check
-    subdir_check="$(find "$dir" -mindepth 1 -maxdepth 1 -type d -quit 2>/dev/null)"
+    # Use simple glob and test -d (mergerfs-compatible, avoids find inode issues)
+    # Enable nullglob so pattern expands to nothing if no matches
+    shopt -s nullglob
+    shopt -s dotglob  # Include hidden directories
 
-    if [[ -n "$subdir_check" ]]; then
-        cache_log DEBUG "Not a leaf (has subdirs): $dir (found: $(basename "$subdir_check"))" >&2
+    local subdirs=("$dir"/*/)
+
+    # Restore glob settings
+    shopt -u nullglob
+    shopt -u dotglob
+
+    if [[ ${#subdirs[@]} -gt 0 ]] && [[ -d "${subdirs[0]}" ]]; then
+        cache_log DEBUG "Not a leaf (has subdirs): $dir (found: $(basename "${subdirs[0]}"))" >&2
         return 1  # Has subdirectories, not a leaf
     else
         cache_log DEBUG "Is a leaf (no subdirs): $dir" >&2
@@ -320,6 +325,21 @@ find_oldest_subdir() {
             # Skip hidden directories and current/parent dir references
             if [[ "$dir_name" =~ ^\..*$ ]]; then
                 continue
+            fi
+
+            # Skip directories already moved in dry-run mode
+            if [[ "$DRY_RUN" == "true" ]]; then
+                local already_moved=false
+                for moved_dir in "${DRY_RUN_MOVED_DIRS[@]}"; do
+                    if [[ "$dir" == "$moved_dir" ]]; then
+                        already_moved=true
+                        break
+                    fi
+                done
+                if [[ "$already_moved" == "true" ]]; then
+                    cache_log DEBUG "Skipping $dir (already moved in dry-run)" >&2
+                    continue
+                fi
             fi
 
             # Check if this is a leaf directory (no subdirectories)
@@ -438,6 +458,8 @@ move_directory() {
 
     if [[ "$DRY_RUN" == "true" ]]; then
         cache_log INFO "DRY RUN: Would move $source_path to $destination"
+        # Add to moved list to avoid selecting it again
+        DRY_RUN_MOVED_DIRS+=("$source_path")
         return 0
     fi
 
@@ -573,7 +595,8 @@ EOF
 
 main() {
     local test_mode=false
-    
+    local debug_flag_set=false
+
     while [[ $# -gt 0 ]]; do
         case $1 in
             -h|--help)
@@ -586,6 +609,7 @@ main() {
                 ;;
             -d|--debug)
                 LOG_LEVEL="DEBUG"
+                debug_flag_set=true
                 shift
                 ;;
             -t|--test)
@@ -601,15 +625,22 @@ main() {
                 ;;
         esac
     done
-    
+
     # Set up traps for cleanup
     trap cleanup EXIT
     trap 'error_exit "Script interrupted"' INT TERM
-    
+
     cache_log INFO "Starting $SCRIPT_NAME (PID: $$)"
-    
+
     check_lock
     load_config
+
+    # Restore debug level if --debug flag was used (config may have overridden it)
+    if [[ "$debug_flag_set" == "true" ]]; then
+        LOG_LEVEL="DEBUG"
+        cache_log DEBUG "Debug logging enabled via command line flag"
+    fi
+
     validate_directories
     
     if [[ "$test_mode" == "true" ]]; then
