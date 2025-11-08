@@ -37,17 +37,40 @@ jobs:
       - name: Run test suite
         run: |
           echo "Running full test suite..."
-          ./tests/test-runner.sh
+          ./tests/test-runner.sh 2>&1 | tee test-execution.log
+          exit ${PIPESTATUS[0]}
 
-      - name: Upload test logs on failure
-        if: failure()
+      - name: Collect log files
+        if: always()
+        run: |
+          echo "Collecting log files..."
+          mkdir -p test-artifacts
+
+          # Copy main log if it exists
+          if [ -f shoveover.log ]; then
+            cp shoveover.log test-artifacts/ || true
+          fi
+
+          # Copy test execution log
+          if [ -f test-execution.log ]; then
+            cp test-execution.log test-artifacts/ || true
+          fi
+
+          # Copy any test logs
+          find tests/ -name "*.log" -type f -exec cp {} test-artifacts/ \; || true
+
+          # List what we collected
+          echo "Collected artifacts:"
+          ls -lah test-artifacts/ || echo "No artifacts collected"
+
+      - name: Upload test logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-logs
-          path: |
-            shoveover.log
-            tests/**/*.log
+          path: test-artifacts/
           retention-days: 7
+          if-no-files-found: warn
 
   lint:
     name: Shell Script Linting
