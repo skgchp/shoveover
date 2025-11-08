@@ -198,23 +198,53 @@ validate_directories() {
 }
 
 check_lock() {
-    # Try to create lock file atomically
     if [[ -f "$LOCK_FILE" ]]; then
         local lock_pid
         lock_pid=$(cat "$LOCK_FILE" 2>/dev/null || echo "")
 
-        # Check if the process is still running
+        # Check if process exists
         if [[ -n "$lock_pid" ]] && kill -0 "$lock_pid" 2>/dev/null; then
-            error_exit "Another instance is already running (PID: $lock_pid, lock file: $LOCK_FILE)"
+            # Process exists - check if lock file is stale
+            local lock_age
+            if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "freebsd"* ]]; then
+                # macOS/BSD uses -f flag
+                lock_age=$(( $(date +%s) - $(stat -f %m "$LOCK_FILE" 2>/dev/null || echo $(date +%s)) ))
+            else
+                # Linux uses -c flag
+                lock_age=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo $(date +%s)) ))
+            fi
+
+            if [[ $lock_age -gt ${STALE_LOCK_TIMEOUT:-7200} ]]; then
+                cache_log WARN "Detected stale process (PID $lock_pid, inactive for ${lock_age}s, threshold: ${STALE_LOCK_TIMEOUT:-7200}s)"
+                cache_log WARN "Attempting graceful termination of hung process..."
+
+                # Try graceful termination
+                kill -TERM "$lock_pid" 2>/dev/null
+                sleep 5
+
+                # Check if it died
+                if kill -0 "$lock_pid" 2>/dev/null; then
+                    cache_log ERROR "Process $lock_pid did not respond to SIGTERM, sending SIGKILL"
+                    kill -KILL "$lock_pid" 2>/dev/null
+                    sleep 2
+                fi
+
+                cache_log INFO "Removed hung process, cleaning up lock file"
+                rm -f "$LOCK_FILE"
+            else
+                # Lock is fresh, another instance is legitimately running
+                error_exit "Another instance is already running (PID: $lock_pid, last heartbeat: ${lock_age}s ago)"
+            fi
         else
-            cache_log WARN "Removing stale lock file (PID: $lock_pid)"
+            # Process doesn't exist - stale lock
+            cache_log WARN "Removing stale lock file (PID: $lock_pid not running)"
             rm -f "$LOCK_FILE"
         fi
     fi
 
-    # Create lock file with current PID
+    # Create new lock file
     echo $$ > "$LOCK_FILE"
-    cache_log INFO "Acquired process lock"
+    cache_log INFO "Acquired process lock (PID: $$)"
 }
 
 get_disk_usage_percent() {
@@ -314,7 +344,8 @@ find_oldest_subdir() {
         local source_dir="${SOURCE_DIRS[i]}"
 
         # Build find command with optional depth limit
-        local find_cmd="find \"$source_dir\" -mindepth 1 -type d"
+        # -P prevents following symlinks to avoid infinite loops and unintended paths
+        local find_cmd="find -P \"$source_dir\" -mindepth 1 -type d"
         if [[ -n "${MAX_SEARCH_DEPTH:-}" ]] && [[ "$MAX_SEARCH_DEPTH" -gt 0 ]]; then
             find_cmd="$find_cmd -maxdepth $MAX_SEARCH_DEPTH"
         fi
@@ -717,6 +748,9 @@ main() {
     local moved_dirs=()
     
     while (( moved_count < MAX_MOVES_PER_RUN )); do
+        # Update lock file timestamp to show we're alive and making progress
+        touch "$LOCK_FILE" 2>/dev/null || true
+
         # Get the first source directory for disk space checking
         local first_source=""
         if [[ ${#SOURCE_DIRS[@]} -gt 0 ]]; then
