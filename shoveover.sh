@@ -334,7 +334,7 @@ find_oldest_subdir() {
             fi
 
             local mtime
-            mtime="$(stat -f %m "$dir" 2>/dev/null || stat -c %Y "$dir" 2>/dev/null)"
+            mtime="$(get_mtime "$dir")"
 
             if [[ -z "$oldest_time" ]] || (( mtime < oldest_time )); then
                 oldest_time="$mtime"
@@ -366,13 +366,25 @@ get_source_root() {
     error_exit "Could not find source root for path: $target_path"
 }
 
+get_mtime() {
+    local path="$1"
+    # Detect OS and use appropriate stat syntax
+    if [[ "$OSTYPE" == "darwin"* ]] || [[ "$OSTYPE" == "freebsd"* ]]; then
+        # macOS/BSD uses -f flag
+        stat -f %m "$path" 2>/dev/null
+    else
+        # Linux uses -c flag
+        stat -c %Y "$path" 2>/dev/null
+    fi
+}
+
 get_dir_age_days() {
     local dir="$1"
     local mtime
     local now
     local age_seconds
-    
-    mtime="$(stat -f %m "$dir" 2>/dev/null || stat -c %Y "$dir" 2>/dev/null)"
+
+    mtime="$(get_mtime "$dir")"
     now="$(date +%s)"
     age_seconds="$((now - mtime))"
     echo "$((age_seconds / 86400))"
